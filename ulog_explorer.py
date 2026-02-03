@@ -30,8 +30,13 @@ st.markdown("""
     
     /* Sayfa boşlukları */
     .block-container {
-        padding: 1rem 1.5rem !important;
+        padding: 0.5rem 1rem !important;
         max-width: 100% !important;
+    }
+    
+    /* Ana sayfa scroll engelle */
+    .main {
+        overflow: hidden !important;
     }
     
     /* Font */
@@ -39,28 +44,26 @@ st.markdown("""
         font-family: 'Segoe UI', -apple-system, sans-serif;
     }
     
-    /* Sol panel - kompakt dosya yönetimi */
-    .file-panel {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        padding: 1rem;
-        height: fit-content;
+    /* Sol kolon - sabit */
+    [data-testid="stHorizontalBlock"] > div:first-child {
+        position: sticky;
+        top: 0;
+        align-self: flex-start;
+        max-height: 95vh;
     }
     
-    .file-panel-dark {
-        background: #1e293b;
-        border: 1px solid #334155;
+    /* Orta kolon (grafik) - sabit */
+    [data-testid="stHorizontalBlock"] > div:nth-child(2) {
+        position: sticky;
+        top: 0;
+        align-self: flex-start;
     }
     
-    /* Sağ panel - veri seçimi */
-    .data-panel {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        padding: 1rem;
-        max-height: 75vh;
+    /* Sag kolon - scroll edilebilir */
+    [data-testid="stHorizontalBlock"] > div:last-child {
+        max-height: 90vh;
         overflow-y: auto;
+        padding-right: 0.5rem;
     }
     
     /* Panel başlıkları */
@@ -73,6 +76,15 @@ st.markdown("""
         margin-bottom: 0.75rem;
         padding-bottom: 0.5rem;
         border-bottom: 1px solid #e2e8f0;
+    }
+    
+    /* Selectbox - tıklanabilir cursor */
+    .stSelectbox > div > div {
+        cursor: pointer !important;
+    }
+    
+    .stSelectbox input {
+        cursor: pointer !important;
     }
     
     /* Expander stil */
