@@ -4,11 +4,11 @@ PX4/ArduPilot uçuş loglarını (ULog) analiz etmek için basit ve hızlı bir 
 
 ## Özellikler
 
-- 📂 ULog dosyası yükleme
-- 📊 Topic ve field seçimi
-- 📈 İnteraktif Plotly grafikleri
-- ⚡ Lazy loading ile hızlı performans
-- 🎨 Modern dark tema
+-  ULog dosyası yükleme
+-  Topic ve field seçimi
+-  İnteraktif Plotly grafikleri
+-  Lazy loading ile hızlı performans
+-  Modern dark tema
 
 ## Kurulum
 
