@@ -1,18 +1,6 @@
-# ULog Analytics Dashboard - Python Dependencies
-# Install with: pip install -r requirements.txt
-
-# Core Framework
-streamlit>=1.30.0
-
-# Data Visualization
+pyulog>=1.0.0
 plotly>=5.18.0
-
-# Data Processing
-pandas>=2.1.4
-numpy>=1.26.2
-
-# ULog File Parsing
-pyulog>=1.0.1
-
-# Optional: Performance & Quality of Life
-watchdog>=3.0.0  # File system monitoring for auto-reload
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
+pandas>=2.0.0
+numpy>=1.24.0

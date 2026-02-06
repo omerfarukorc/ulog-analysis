@@ -1,15 +1,18 @@
 #!/bin/bash
 
-echo "ULog Explorer Baslatiliyor..."
-echo "Lutfen bekleyin..."
+echo "========================================"
+echo "ULog Explorer"
+echo "========================================"
+echo
+echo "Tarayicida acin: http://localhost:8050"
+echo "Kapatmak icin: Ctrl+C"
+echo
 
-# Persistent dizini olustur
-if [ ! -d "uploaded_ulogs" ]; then
-    mkdir "uploaded_ulogs"
+# Tarayici ac (opsiyonel)
+if command -v xdg-open &> /dev/null; then
+    xdg-open http://localhost:8050 &
+elif command -v open &> /dev/null; then
+    open http://localhost:8050 &
 fi
 
-# Streamlit uygulamasini calistir
-python3 -m streamlit run ulog_explorer.py
-
-# Terminal hemen kapanmasin diye
-read -p "Cikmak icin ENTER'a basin..."
+python3 ulog_dash.py
