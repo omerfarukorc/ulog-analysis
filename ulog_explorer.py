@@ -1,435 +1,313 @@
 import streamlit as st
 import os
-import shutil
 from pyulog import ULog
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 
-# Logların kalıcı olarak saklanacağı klasör
-ULOG_STORAGE_DIR = "uploaded_ulogs"
-if not os.path.exists(ULOG_STORAGE_DIR):
-    os.makedirs(ULOG_STORAGE_DIR)
+# Config
+ULOG_DIR = "uploaded_ulogs"
+os.makedirs(ULOG_DIR, exist_ok=True)
 
 st.set_page_config(
-    layout="wide", 
-    page_title="ULog Analiz",
-    initial_sidebar_state="collapsed",
-    menu_items={}
+    layout="wide",
+    page_title="ULog Analytics",
+    initial_sidebar_state="collapsed"
 )
 
-# Minimal ve Şık CSS Tasarımı
+# Compact Modern Dark Theme
 st.markdown("""
 <style>
-    /* Header, footer ve deploy gizle */
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stDeployButton {display: none;}
-    [data-testid="stHeader"] {display: none;}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
     
-    /* Sayfa boşlukları */
-    .block-container {
-        padding: 0.5rem 1rem !important;
-        max-width: 100% !important;
-    }
+    * { font-family: 'Inter', sans-serif; }
     
-    /* Ana sayfa scroll engelle */
-    .main {
-        overflow: hidden !important;
-    }
+    #MainMenu, footer, .stDeployButton { display: none !important; }
+    [data-testid="stHeader"] { background: transparent; }
     
-    /* Font */
-    * {
-        font-family: 'Segoe UI', -apple-system, sans-serif;
-    }
+    .block-container { padding: 0.5rem 0.75rem !important; max-width: 100%; }
+    .stApp { background: #0f172a; }
     
-    /* Sol kolon - sabit */
-    [data-testid="stHorizontalBlock"] > div:first-child {
-        position: sticky;
-        top: 0;
-        align-self: flex-start;
-        max-height: 95vh;
-    }
-    
-    /* Orta kolon (grafik) - sabit */
-    [data-testid="stHorizontalBlock"] > div:nth-child(2) {
-        position: sticky;
-        top: 0;
-        align-self: flex-start;
-    }
-    
-    /* Sag kolon - scroll edilebilir */
-    [data-testid="stHorizontalBlock"] > div:last-child {
-        max-height: 90vh;
-        overflow-y: auto;
-        padding-right: 0.5rem;
-    }
-    
-    /* Panel başlıkları */
-    .panel-title {
-        font-size: 0.8rem;
+    /* Panel başlık */
+    .panel-header {
+        font-size: 0.6rem;
         font-weight: 600;
         color: #64748b;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin-bottom: 0.75rem;
-        padding-bottom: 0.5rem;
-        border-bottom: 1px solid #e2e8f0;
+        margin-bottom: 0.4rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid #1e293b;
     }
     
-    /* Selectbox - tıklanabilir cursor */
-    .stSelectbox > div > div {
-        cursor: pointer !important;
-    }
-    
-    .stSelectbox input {
-        cursor: pointer !important;
-    }
-    
-    /* Expander stil */
-    .streamlit-expanderHeader {
-        font-size: 0.85rem !important;
-        font-weight: 500;
-        background: #f1f5f9;
-        border-radius: 6px;
-        padding: 0.5rem !important;
-    }
-    
-    .streamlit-expanderHeader:hover {
-        background: #e2e8f0;
-    }
-    
-    /* Checkbox */
-    .stCheckbox label span {
-        font-size: 0.8rem !important;
-        color: #475569;
-    }
-    
-    /* İnput alanları */
-    .stTextInput input {
-        font-size: 0.85rem;
-        border-radius: 6px;
-        border: 1px solid #cbd5e1;
-    }
-    
-    .stTextInput input:focus {
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-    }
-    
-    /* Selectbox */
-    .stSelectbox > div > div {
-        font-size: 0.85rem;
-        border-radius: 6px;
-    }
-    
-    /* Tab stil */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        background: #f1f5f9;
+    /* Seçili chip - kompakt */
+    .selected-chip {
+        display: inline-block;
+        background: #3b82f6;
         border-radius: 8px;
-        padding: 4px;
+        padding: 2px 6px;
+        margin: 2px;
+        font-size: 0.6rem;
+        color: white;
     }
     
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        border-radius: 6px;
-        padding: 0.5rem 1rem;
+    /* Info box - dark */
+    .info-box {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 1.5rem;
+        text-align: center;
         color: #64748b;
-        font-weight: 500;
-        font-size: 0.85rem;
-        border: none;
     }
-    
-    .stTabs [aria-selected="true"] {
-        background: white;
-        color: #1e293b;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    
-    /* Butonlar */
-    .stDownloadButton button {
-        background: #3b82f6;
-        border: none;
-        border-radius: 6px;
-        color: white;
-        font-weight: 500;
-        font-size: 0.8rem;
-        padding: 0.4rem 1rem;
-    }
-    
-    .stDownloadButton button:hover {
-        background: #2563eb;
-    }
-    
-    /* File uploader - kompakt */
-    .stFileUploader {
-        padding: 0;
-    }
-    
-    .stFileUploader > div {
-        padding: 0.5rem;
-    }
-    
-    .stFileUploader label {
-        font-size: 0.8rem !important;
-    }
-    
-    /* Seçim sayacı */
-    .selection-badge {
-        background: #3b82f6;
-        color: white;
-        padding: 0.2rem 0.6rem;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 500;
-    }
+    .info-box h3 { color: #94a3b8; font-size: 1rem; font-weight: 500; margin-bottom: 0.3rem; }
+    .info-box p { font-size: 0.8rem; margin: 0; }
     
     /* Scrollbar */
-    ::-webkit-scrollbar {
-        width: 5px;
-        height: 5px;
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+    
+    hr { border-color: #1e293b; margin: 0.3rem 0; }
+    
+    /* Input - kompakt */
+    .stTextInput > div > div > input { 
+        font-size: 0.7rem !important; 
+        padding: 0.3rem 0.5rem !important;
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        border-radius: 4px !important;
+        color: #e2e8f0 !important;
     }
     
-    ::-webkit-scrollbar-track {
-        background: #f1f5f9;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: #cbd5e1;
-        border-radius: 3px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: #94a3b8;
-    }
-    
-    /* Alert stilleri */
-    .stAlert {
-        padding: 0.75rem;
-        font-size: 0.85rem;
-    }
-    
-    /* Caption */
-    .stCaption {
-        font-size: 0.75rem !important;
+    /* Button - çok kompakt */
+    .stButton > button { 
+        font-size: 0.65rem !important; 
+        padding: 0.2rem 0.4rem !important;
+        min-height: 0 !important;
+        line-height: 1.2 !important;
+        border-radius: 3px !important;
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
         color: #94a3b8 !important;
     }
-    
-    /* Bilgi mesajı */
-    .info-message {
-        text-align: center;
-        padding: 3rem;
-        color: #64748b;
+    .stButton > button:hover {
+        background: #334155 !important;
+        color: #e2e8f0 !important;
     }
     
-    .info-message h3 {
-        font-weight: 400;
-        color: #475569;
-        margin-bottom: 0.5rem;
-    }
+    /* Caption - küçük */
+    .stCaption { font-size: 0.6rem !important; color: #64748b !important; }
     
-    .info-message p {
-        font-size: 0.9rem;
+    /* Selectbox - kompakt */
+    .stSelectbox > div > div { 
+        font-size: 0.7rem !important;
+        background: #1e293b !important;
     }
+    .stSelectbox label { font-size: 0.6rem !important; color: #64748b !important; }
+    
+    /* File uploader - kompakt */
+    .stFileUploader { padding: 0 !important; }
+    .stFileUploader > div { padding: 0.3rem !important; }
+    .stFileUploader label { font-size: 0.6rem !important; }
+    
+    /* Tabs - kompakt */
+    .stTabs [data-baseweb="tab"] { font-size: 0.7rem !important; padding: 0.3rem 0.6rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# === LAYOUT: SOL PANEL | ORTA (GRAFİK) | SAĞ PANEL ===
+# ============================================================================
+# LAZY LOADING CACHE FUNCTIONS
+# ============================================================================
+
+@st.cache_data(show_spinner=False)
+def load_topic_names(file_path: str) -> list:
+    """Sadece topic isimlerini yükle - çok hızlı"""
+    try:
+        ulog = ULog(file_path)
+        return sorted([f"{d.name}_{d.multi_id}" for d in ulog.data_list])
+    except:
+        return []
+
+@st.cache_data(show_spinner=False)
+def load_topic_fields(file_path: str, topic: str) -> list:
+    """Bir topic'in field'larını yükle - topic tıklanınca"""
+    try:
+        ulog = ULog(file_path)
+        for d in ulog.data_list:
+            if f"{d.name}_{d.multi_id}" == topic:
+                return sorted([k for k in d.data.keys() if k != 'timestamp'])
+        return []
+    except:
+        return []
+
+@st.cache_data(show_spinner=False)
+def load_field_data(file_path: str, topic: str, field: str):
+    """Sadece seçilen verinin time-series'ini yükle - grafik çizilirken"""
+    try:
+        ulog = ULog(file_path)
+        for d in ulog.data_list:
+            if f"{d.name}_{d.multi_id}" == topic:
+                t = d.data['timestamp'] / 1e6
+                y = d.data[field]
+                return t, y
+        return None, None
+    except:
+        return None, None
+
+# ============================================================================
+# SESSION STATE
+# ============================================================================
+
+if "expanded_topics" not in st.session_state:
+    st.session_state.expanded_topics = []
+if "selected_params" not in st.session_state:
+    st.session_state.selected_params = []
+
+# ============================================================================
+# LAYOUT: Sol Panel | Orta (Grafik) | Sağ Panel
+# ============================================================================
+
 col_left, col_main, col_right = st.columns([1.2, 4, 1.5])
 
-# --- SOL PANEL: DOSYA YÖNETİMİ ---
+# --- SOL PANEL: DOSYA ---
 with col_left:
-    st.markdown('<div class="panel-title">Dosya Yonetimi</div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel-header">Dosya</div>', unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader("Log Yukle", type=["ulg"], label_visibility="collapsed")
-    if uploaded_file:
-        file_path = os.path.join(ULOG_STORAGE_DIR, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"{uploaded_file.name} yuklendi")
+    uploaded = st.file_uploader("", type=["ulg"], label_visibility="collapsed")
+    if uploaded:
+        with open(os.path.join(ULOG_DIR, uploaded.name), "wb") as f:
+            f.write(uploaded.getbuffer())
+        st.success(f"{uploaded.name}")
     
-    existing_files = [f for f in os.listdir(ULOG_STORAGE_DIR) if f.endswith(".ulg")]
+    files = sorted([f for f in os.listdir(ULOG_DIR) if f.endswith(".ulg")])
+    if not files:
+        st.info("ULog yükleyin")
+        st.stop()
     
-    selected_file_name = None
-    if existing_files:
-        selected_file_name = st.selectbox(
-            "Dosya", 
-            existing_files, 
-            index=len(existing_files)-1,
-            label_visibility="collapsed"
-        )
-        if selected_file_name:
-            file_path = os.path.join(ULOG_STORAGE_DIR, selected_file_name)
-            size_mb = os.path.getsize(file_path) / (1024*1024)
-            st.caption(f"{size_mb:.2f} MB")
-    else:
-        st.info("Dosya yukleyin")
+    selected_file = st.selectbox("", files, label_visibility="collapsed")
+    ulog_path = os.path.join(ULOG_DIR, selected_file)
+    
+    size_mb = os.path.getsize(ulog_path) / (1024*1024)
+    st.caption(f"{size_mb:.2f} MB")
+    
+    # Seçili parametreler
+    if st.session_state.selected_params:
+        st.markdown('<div class="panel-header">Secili</div>', unsafe_allow_html=True)
+        for tp, fd in st.session_state.selected_params:
+            st.markdown(f'<span class="selected-chip">{fd[:15]}</span>', unsafe_allow_html=True)
+        
+        if st.button("Temizle", use_container_width=True):
+            st.session_state.selected_params = []
+            st.rerun()
 
-# Ana ekran kontrolü
-if not selected_file_name:
-    with col_main:
-        st.markdown("""
-        <div class="info-message">
-            <h3>ULog Analiz</h3>
-            <p>Sol panelden bir log dosyasi yukleyin veya secin</p>
-        </div>
-        """, unsafe_allow_html=True)
-    st.stop()
-
-# Dosyayı Oku
-ulog = None
-try:
-    ulog = ULog(os.path.join(ULOG_STORAGE_DIR, selected_file_name))
-except Exception as e:
-    with col_main:
-        st.error(f"Dosya okuma hatasi: {e}")
-    st.stop()
-
-# Veri Hazırlama
-topics = {}
-msg_data_map = {}
-for data in ulog.data_list:
-    t_name = f"{data.name} ({data.multi_id})"
-    keys = sorted([k for k in data.data.keys() if k != 'timestamp'])
-    topics[t_name] = keys
-    msg_data_map[t_name] = data
-
-# --- SAĞ PANEL: VERİ SEÇİMİ ---
-selected_series = []
-
+# --- SAĞ PANEL: VERİ SEÇİMİ (LAZY LOADING) ---
 with col_right:
-    st.markdown('<div class="panel-title">Veri Secimi</div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel-header">Veri Secimi</div>', unsafe_allow_html=True)
     
-    search_query = st.text_input("Ara", placeholder="ornek: battery", label_visibility="collapsed")
+    search = st.text_input("", placeholder="Ara...", label_visibility="collapsed")
     
-    search_topic = ""
-    search_field = ""
-    if "." in search_query:
-        parts = search_query.split(".", 1)
-        search_topic, search_field = parts[0].lower(), parts[1].lower()
-    else:
-        search_topic = search_query.lower()
-
-    count_found = 0
+    # Sadece topic isimlerini yükle (çok hızlı)
+    topics = load_topic_names(ulog_path)
     
-    # Topic listesi
-    for topic_name in sorted(topics.keys()):
-        fields = topics[topic_name]
-        
-        t_name_lower = topic_name.lower()
-        topic_matches = search_topic in t_name_lower
-        
-        if "." in search_query:
-            display_fields = [f for f in fields if search_field in f.lower()] if topic_matches else []
-        else:
-            display_fields = fields if topic_matches else [f for f in fields if search_query.lower() in f.lower()]
+    # Filtrele
+    if search:
+        topics = [t for t in topics if search.lower() in t.lower()]
+    
+    st.caption(f"{len(topics)} topic")
+    
+    # Topic listesi (scrollable)
+    topic_container = st.container(height=550)
+    
+    with topic_container:
+        for topic in topics[:60]:  # Performans için limit
+            is_expanded = topic in st.session_state.expanded_topics
+            arrow = "▼" if is_expanded else "▶"
             
-        if not display_fields:
-            continue
+            # Topic butonu
+            if st.button(f"{arrow} {topic[:28]}", key=f"t_{topic}", use_container_width=True):
+                if is_expanded:
+                    st.session_state.expanded_topics.remove(topic)
+                else:
+                    st.session_state.expanded_topics.append(topic)
+                st.rerun()
             
-        count_found += 1
-        
-        with st.expander(topic_name, expanded=bool(search_query)):
-            for field in display_fields:
-                unique_key = f"{topic_name}_{field}"
-                if st.checkbox(field, key=unique_key):
-                    selected_series.append((topic_name, field))
+            # Field'lar - SADECE AÇIKSA YÜKLE (Lazy Loading)
+            if is_expanded:
+                fields = load_topic_fields(ulog_path, topic)  # Sadece bu topic için yükle
+                
+                for field in fields[:30]:
+                    param = (topic, field)
+                    is_selected = param in st.session_state.selected_params
+                    
+                    fc1, fc2 = st.columns([5, 1])
+                    with fc1:
+                        st.caption(f"  {field[:20]}")
+                    with fc2:
+                        btn_label = "✓" if is_selected else "+"
+                        if st.button(btn_label, key=f"f_{topic}_{field}"):
+                            if is_selected:
+                                st.session_state.selected_params.remove(param)
+                            else:
+                                st.session_state.selected_params.append(param)
+                            st.rerun()
 
-    if search_query and count_found == 0:
-        st.caption("Sonuc bulunamadi")
-    
-    # Seçim sayısı
-    if selected_series:
-        st.markdown(f'<span class="selection-badge">{len(selected_series)} secili</span>', unsafe_allow_html=True)
+# --- ORTA: GRAFİK ---
+COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
-# --- ORTA ALAN: GRAFİK ---
 with col_main:
-    if selected_series:
-        tab1, tab2 = st.tabs(["Grafik", "Istatistikler"])
+    if st.session_state.selected_params:
+        tab1, tab2 = st.tabs(["Grafik", "Istatistik"])
         
         with tab1:
             fig = go.Figure()
             
-            colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
-            
-            for idx, (topic, field) in enumerate(selected_series):
-                data_obj = msg_data_map[topic]
-                t = data_obj.data['timestamp'] / 1e6
-                y = data_obj.data[field]
-                color = colors[idx % len(colors)]
-                fig.add_trace(go.Scatter(
-                    x=t, y=y, 
-                    name=f"{topic.split(' ')[0]}.{field}", 
-                    mode='lines',
-                    line=dict(color=color, width=1.5)
-                ))
+            for idx, (topic, field) in enumerate(st.session_state.selected_params):
+                # Sadece seçili veriyi yükle (Lazy Loading)
+                t, y = load_field_data(ulog_path, topic, field)
+                
+                if t is not None:
+                    fig.add_trace(go.Scatter(
+                        x=t, y=y,
+                        name=f"{topic.split('_')[0]}.{field}",
+                        mode='lines',
+                        line=dict(color=COLORS[idx % len(COLORS)], width=1.5)
+                    ))
             
             fig.update_layout(
-                xaxis_title="Zaman (s)",
-                yaxis_title="Deger",
                 height=600,
-                template="plotly_white",
+                template="plotly_dark",
                 hovermode="x unified",
-                legend=dict(
-                    orientation="h", 
-                    yanchor="bottom", 
-                    y=1.02, 
-                    xanchor="right", 
-                    x=1,
-                    font=dict(size=10)
-                ),
                 margin=dict(l=50, r=20, t=30, b=50),
-                xaxis=dict(
-                    gridcolor='#f1f5f9',
-                    zerolinecolor='#e2e8f0',
-                    tickfont=dict(size=10)
-                ),
-                yaxis=dict(
-                    gridcolor='#f1f5f9',
-                    zerolinecolor='#e2e8f0',
-                    tickfont=dict(size=10)
-                )
+                paper_bgcolor='#0f172a',
+                plot_bgcolor='#1e293b',
+                xaxis=dict(title="Zaman (s)", gridcolor='#334155'),
+                yaxis=dict(title="Deger", gridcolor='#334155'),
+                legend=dict(orientation="h", y=1.02, font=dict(size=9))
             )
             
             st.plotly_chart(fig, use_container_width=True, config={
                 'scrollZoom': True,
                 'displayModeBar': True,
-                'displaylogo': False,
-                'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'v1hovermode', 'hoverclosest'],
-                'toImageButtonOptions': {'format': 'png', 'filename': f'analiz_{selected_file_name}', 'scale': 2}
+                'displaylogo': False
             })
-            
-            # HTML İndir
-            import io
-            buffer = io.StringIO()
-            fig.write_html(buffer)
-            st.download_button(
-                "HTML Indir", 
-                buffer.getvalue().encode('utf-8'), 
-                f"analiz_{selected_file_name}.html", 
-                "text/html"
-            )
-
+        
         with tab2:
-            stats_data = []
-            for topic, field in selected_series:
-                data_obj = msg_data_map[topic]
-                y = data_obj.data[field]
-                stats_data.append({
-                    "Parametre": f"{topic.split(' ')[0]}.{field}",
-                    "Min": f"{float(np.nanmin(y)):.4f}",
-                    "Maks": f"{float(np.nanmax(y)):.4f}",
-                    "Ort": f"{float(np.nanmean(y)):.4f}",
-                    "Std": f"{float(np.nanstd(y)):.4f}"
-                })
-            st.dataframe(pd.DataFrame(stats_data), use_container_width=True, hide_index=True)
-            
+            stats = []
+            for topic, field in st.session_state.selected_params:
+                t, y = load_field_data(ulog_path, topic, field)
+                if y is not None:
+                    stats.append({
+                        "Parametre": f"{topic.split('_')[0]}.{field}",
+                        "Min": f"{float(np.nanmin(y)):.4f}",
+                        "Max": f"{float(np.nanmax(y)):.4f}",
+                        "Ort": f"{float(np.nanmean(y)):.4f}",
+                        "Std": f"{float(np.nanstd(y)):.4f}"
+                    })
+            st.dataframe(pd.DataFrame(stats), use_container_width=True, hide_index=True)
     else:
         st.markdown("""
-        <div class="info-message">
-            <h3>Grafik Goruntulemesi</h3>
-            <p>Sag panelden analiz edilecek verileri secin</p>
+        <div class="info-box">
+            <h3 style="color: rgba(255,255,255,0.7); font-weight: 500;">Grafik Goruntuleme</h3>
+            <p>Sag panelden veri secin</p>
         </div>
         """, unsafe_allow_html=True)
