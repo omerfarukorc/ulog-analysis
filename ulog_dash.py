@@ -76,12 +76,12 @@ app.index_string = '''
     <style>
         body { 
             font-family: 'Inter', -apple-system, sans-serif; 
-            background: #0f172a;
+            background: #0a0f1a;
             margin: 0;
             padding: 0;
         }
         .panel { 
-            background: #1e293b; 
+            background: #111827; 
             border-radius: 8px; 
             padding: 12px;
             height: calc(100vh - 24px);
@@ -90,17 +90,17 @@ app.index_string = '''
         .panel-title {
             font-size: 11px;
             font-weight: 600;
-            color: #64748b;
+            color: #4b5563;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 12px;
             padding-bottom: 8px;
-            border-bottom: 1px solid #334155;
+            border-bottom: 1px solid #1f2937;
         }
         .topic-btn {
-            background: #334155;
+            background: #1f2937;
             border: none;
-            color: #94a3b8;
+            color: #9ca3af;
             padding: 6px 10px;
             border-radius: 4px;
             cursor: pointer;
@@ -109,42 +109,52 @@ app.index_string = '''
             font-size: 12px;
             margin-bottom: 4px;
         }
-        .topic-btn:hover { background: #475569; color: #e2e8f0; }
+        .topic-btn:hover { background: #374151; color: #e5e7eb; }
         .field-item {
             padding: 4px 8px 4px 20px;
             font-size: 11px;
-            color: #94a3b8;
+            color: #9ca3af;
             cursor: pointer;
             border-radius: 3px;
         }
-        .field-item:hover { background: #334155; }
+        .field-item:hover { background: #1f2937; }
         .selected-chip {
-            display: inline-block;
-            background: #3b82f6;
-            color: white;
-            padding: 3px 8px;
-            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            background: #1e40af;
+            color: #dbeafe;
+            padding: 4px 8px;
+            border-radius: 12px;
             font-size: 10px;
-            margin: 2px;
+            margin: 3px;
+            cursor: pointer;
+            border: none;
         }
+        .selected-chip:hover { background: #1d4ed8; }
+        .chip-x {
+            margin-left: 6px;
+            font-weight: bold;
+            opacity: 0.7;
+        }
+        .chip-x:hover { opacity: 1; }
         .info-box {
-            background: #1e293b;
-            border: 1px solid #334155;
+            background: #111827;
+            border: 1px solid #1f2937;
             border-radius: 8px;
             padding: 40px;
             text-align: center;
-            color: #64748b;
+            color: #4b5563;
         }
         .main-graph { 
-            background: #1e293b; 
+            background: #111827; 
             border-radius: 8px; 
             padding: 16px;
             height: calc(100vh - 24px);
         }
         select, input {
-            background: #334155 !important;
-            border: 1px solid #475569 !important;
-            color: #e2e8f0 !important;
+            background: #1f2937 !important;
+            border: 1px solid #374151 !important;
+            color: #e5e7eb !important;
             border-radius: 4px;
             padding: 6px 10px;
             font-size: 12px;
@@ -152,7 +162,7 @@ app.index_string = '''
         }
         select:focus, input:focus { outline: none; border-color: #3b82f6 !important; }
         ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
     </style>
 </head>
 <body>
@@ -328,10 +338,36 @@ def toggle_field(clicks, selected):
 )
 def update_selected_display(selected):
     if not selected:
-        return html.Div("Henüz seçim yok", style={'color': '#64748b', 'fontSize': '11px'})
+        return html.Div("Henüz seçim yok", style={'color': '#4b5563', 'fontSize': '11px'})
     
-    chips = [html.Span(f"{p[1][:12]}", className='selected-chip') for p in selected]
+    chips = []
+    for idx, p in enumerate(selected):
+        chips.append(
+            html.Button(
+                [p[1][:12], html.Span(" ✕", className='chip-x')],
+                id={'type': 'chip-remove', 'index': idx},
+                className='selected-chip',
+                n_clicks=0
+            )
+        )
     return chips
+
+@callback(
+    Output('selected-params', 'data', allow_duplicate=True),
+    Input({'type': 'chip-remove', 'index': ALL}, 'n_clicks'),
+    State('selected-params', 'data'),
+    prevent_initial_call=True
+)
+def remove_chip(clicks, selected):
+    from dash import ctx
+    if not ctx.triggered_id or not selected:
+        return selected or []
+    
+    idx = ctx.triggered_id['index']
+    if 0 <= idx < len(selected):
+        selected.pop(idx)
+    
+    return selected
 
 @callback(
     Output('main-graph', 'figure'),
@@ -342,14 +378,14 @@ def update_graph(selected, filename):
     if not selected or not filename:
         return go.Figure().update_layout(
             template='plotly_dark',
-            paper_bgcolor='#1e293b',
-            plot_bgcolor='#1e293b',
+            paper_bgcolor='#111827',
+            plot_bgcolor='#111827',
             annotations=[{
                 'text': 'Sağ panelden veri seçin',
                 'xref': 'paper', 'yref': 'paper',
                 'x': 0.5, 'y': 0.5,
                 'showarrow': False,
-                'font': {'size': 16, 'color': '#64748b'}
+                'font': {'size': 16, 'color': '#4b5563'}
             }]
         )
     
@@ -372,12 +408,12 @@ def update_graph(selected, filename):
     
     fig.update_layout(
         template='plotly_dark',
-        paper_bgcolor='#1e293b',
-        plot_bgcolor='#0f172a',
+        paper_bgcolor='#111827',
+        plot_bgcolor='#0a0f1a',
         hovermode='x unified',
         margin=dict(l=50, r=20, t=30, b=50),
-        xaxis=dict(title='Zaman (s)', gridcolor='#334155'),
-        yaxis=dict(title='Değer', gridcolor='#334155'),
+        xaxis=dict(title='Zaman (s)', gridcolor='#1f2937'),
+        yaxis=dict(title='Değer', gridcolor='#1f2937'),
         legend=dict(orientation='h', y=1.02, font=dict(size=10))
     )
     
