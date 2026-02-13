@@ -4,7 +4,9 @@ Modern, clean, header-free UI
 """
 
 import os
-from dash import Dash, html, dcc, callback, Output, Input, State, ALL
+import json
+from dash import Dash, html, dcc, callback, Output, Input, State, ALL, no_update, ctx
+from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from pyulog import ULog
@@ -174,6 +176,13 @@ app.index_string = '''
 
 # Layout
 app.layout = dbc.Container([
+    # Hidden stores - defined in layout directly to avoid issues
+    dcc.Store(id='selected-params', data=[]),
+    dcc.Store(id='expanded-topics', data=[]),
+    # Stores that capture click events (written by clientside callbacks)
+    dcc.Store(id='topic-click-store', data=None),
+    dcc.Store(id='field-click-store', data=None),
+
     dbc.Row([
         # Left Panel - File
         dbc.Col([
@@ -217,11 +226,11 @@ app.layout = dbc.Container([
     ])
 ], fluid=True, style={'padding': 0, 'maxWidth': '100%'})
 
-# Store for selected params
-app.layout.children.insert(0, dcc.Store(id='selected-params', data=[]))
-app.layout.children.insert(0, dcc.Store(id='expanded-topics', data=[]))
 
+# ============================================================
 # Callbacks
+# ============================================================
+
 @callback(
     Output('upload-status', 'children'),
     Output('file-select', 'options'),
@@ -240,6 +249,103 @@ def upload_file(contents, filename):
     files = get_files()
     return "", [{'label': f, 'value': f} for f in files]
 
+
+# --- Topic toggle: use clientside callback to write clicked topic to store ---
+app.clientside_callback(
+    """
+    function() {
+        const triggered = dash_clientside.callback_context.triggered;
+        if (!triggered || triggered.length === 0) {
+            return dash_clientside.no_update;
+        }
+        // Find which button was actually clicked (n_clicks > 0)
+        for (let i = 0; i < triggered.length; i++) {
+            if (triggered[i].value && triggered[i].value > 0) {
+                const id = JSON.parse(triggered[i].prop_id.split('.')[0]);
+                return {topic: id.topic, ts: Date.now()};
+            }
+        }
+        return dash_clientside.no_update;
+    }
+    """,
+    Output('topic-click-store', 'data'),
+    Input({'type': 'topic-btn', 'topic': ALL}, 'n_clicks'),
+    prevent_initial_call=True
+)
+
+# --- Field toggle: use clientside callback to write clicked field to store ---
+app.clientside_callback(
+    """
+    function() {
+        const triggered = dash_clientside.callback_context.triggered;
+        if (!triggered || triggered.length === 0) {
+            return dash_clientside.no_update;
+        }
+        for (let i = 0; i < triggered.length; i++) {
+            if (triggered[i].value && triggered[i].value > 0) {
+                const id = JSON.parse(triggered[i].prop_id.split('.')[0]);
+                return {topic: id.topic, field: id.field, ts: Date.now()};
+            }
+        }
+        return dash_clientside.no_update;
+    }
+    """,
+    Output('field-click-store', 'data'),
+    Input({'type': 'field-item', 'topic': ALL, 'field': ALL}, 'n_clicks'),
+    prevent_initial_call=True
+)
+
+
+# Server-side: handle topic click store → toggle expanded-topics
+@callback(
+    Output('expanded-topics', 'data'),
+    Input('topic-click-store', 'data'),
+    State('expanded-topics', 'data'),
+    prevent_initial_call=True
+)
+def toggle_topic(click_data, expanded):
+    if not click_data or 'topic' not in click_data:
+        raise PreventUpdate
+    
+    topic = click_data['topic']
+    expanded = list(expanded or [])
+    
+    if topic in expanded:
+        expanded.remove(topic)
+    else:
+        expanded.append(topic)
+    
+    return expanded
+
+
+# Server-side: handle field click store → toggle selected-params
+@callback(
+    Output('selected-params', 'data'),
+    Input('field-click-store', 'data'),
+    State('selected-params', 'data'),
+    prevent_initial_call=True
+)
+def toggle_field(click_data, selected):
+    if not click_data or 'topic' not in click_data or 'field' not in click_data:
+        raise PreventUpdate
+    
+    topic = click_data['topic']
+    field = click_data['field']
+    param = [topic, field]
+    selected = list(selected or [])
+    
+    # Deep copy to avoid mutation issues
+    selected = [list(s) for s in selected]
+    
+    if param in selected:
+        selected.remove(param)
+    else:
+        selected.append(param)
+    
+    return selected
+
+
+# Render the topic list based on file, search, expanded, and selected state
 @callback(
     Output('topic-list', 'children'),
     Input('file-select', 'value'),
@@ -288,50 +394,8 @@ def update_topic_list(filename, search, expanded, selected):
     
     return items
 
-@callback(
-    Output('expanded-topics', 'data'),
-    Input({'type': 'topic-btn', 'topic': ALL}, 'n_clicks'),
-    State('expanded-topics', 'data'),
-    prevent_initial_call=True
-)
-def toggle_topic(clicks, expanded):
-    from dash import ctx
-    if not ctx.triggered_id:
-        return expanded or []
-    
-    topic = ctx.triggered_id['topic']
-    expanded = expanded or []
-    
-    if topic in expanded:
-        expanded.remove(topic)
-    else:
-        expanded.append(topic)
-    
-    return expanded
 
-@callback(
-    Output('selected-params', 'data'),
-    Input({'type': 'field-item', 'topic': ALL, 'field': ALL}, 'n_clicks'),
-    State('selected-params', 'data'),
-    prevent_initial_call=True
-)
-def toggle_field(clicks, selected):
-    from dash import ctx
-    if not ctx.triggered_id:
-        return selected or []
-    
-    topic = ctx.triggered_id['topic']
-    field = ctx.triggered_id['field']
-    param = [topic, field]
-    selected = selected or []
-    
-    if param in selected:
-        selected.remove(param)
-    else:
-        selected.append(param)
-    
-    return selected
-
+# Show selected items as chips
 @callback(
     Output('selected-display', 'children'),
     Input('selected-params', 'data')
@@ -352,6 +416,8 @@ def update_selected_display(selected):
         )
     return chips
 
+
+# Remove chip → update selected-params
 @callback(
     Output('selected-params', 'data', allow_duplicate=True),
     Input({'type': 'chip-remove', 'index': ALL}, 'n_clicks'),
@@ -359,16 +425,22 @@ def update_selected_display(selected):
     prevent_initial_call=True
 )
 def remove_chip(clicks, selected):
-    from dash import ctx
     if not ctx.triggered_id or not selected:
-        return selected or []
+        raise PreventUpdate
+    
+    # Guard against spurious fires (all n_clicks=0 after rebuild)
+    if not any(c for c in clicks if c and c > 0):
+        raise PreventUpdate
     
     idx = ctx.triggered_id['index']
+    selected = [list(s) for s in (selected or [])]
     if 0 <= idx < len(selected):
         selected.pop(idx)
     
     return selected
 
+
+# Update graph based on selected params
 @callback(
     Output('main-graph', 'figure'),
     Input('selected-params', 'data'),
