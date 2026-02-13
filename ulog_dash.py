@@ -1,11 +1,12 @@
 """
 ULog Explorer - Dash Version
-Modern, clean, header-free UI
+PX4 Flight Review style dashboard with collapsible sidebar,
+vehicle info panel, multi-graph support, and standard PX4 graphs.
 """
 
 import os
 import json
-from dash import Dash, html, dcc, callback, Output, Input, State, ALL, no_update, ctx
+from dash import Dash, html, dcc, callback, Output, Input, State, ALL, MATCH, no_update, ctx
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
@@ -13,21 +14,24 @@ from pyulog import ULog
 import numpy as np
 import base64
 
+from px4_graphs import (
+    get_vehicle_info, generate_all_graphs, STANDARD_GRAPHS,
+    COLORS, TRACE_COLORS, _base_layout, _downsample
+)
+
 # Config
 ULOG_DIR = "uploaded_ulogs"
 os.makedirs(ULOG_DIR, exist_ok=True)
 
-# Cache for loaded data
+# Cache
 _cache = {}
 
 def get_ulog(file_path):
-    """Get cached ULog or load new one"""
     if file_path not in _cache:
         _cache[file_path] = ULog(file_path)
     return _cache[file_path]
 
 def get_topics(file_path):
-    """Get topic names from ULog"""
     try:
         ulog = get_ulog(file_path)
         return sorted([f"{d.name}_{d.multi_id}" for d in ulog.data_list])
@@ -35,7 +39,6 @@ def get_topics(file_path):
         return []
 
 def get_fields(file_path, topic):
-    """Get fields for a topic"""
     try:
         ulog = get_ulog(file_path)
         for d in ulog.data_list:
@@ -46,7 +49,6 @@ def get_fields(file_path, topic):
         return []
 
 def get_data(file_path, topic, field):
-    """Get time-series data"""
     try:
         ulog = get_ulog(file_path)
         for d in ulog.data_list:
@@ -59,14 +61,15 @@ def get_data(file_path, topic, field):
         return None, None
 
 def get_files():
-    """Get available ULog files"""
     return sorted([f for f in os.listdir(ULOG_DIR) if f.endswith(".ulg")])
 
-# App
-app = Dash(__name__, external_stylesheets=[dbc.themes.SLATE])
+
+# ============================================================
+# App Init
+# ============================================================
+app = Dash(__name__, external_stylesheets=[dbc.themes.SLATE], suppress_callback_exceptions=True)
 app.title = "ULog Explorer"
 
-# Custom CSS
 app.index_string = '''
 <!DOCTYPE html>
 <html>
@@ -75,96 +78,221 @@ app.index_string = '''
     <title>{%title%}</title>
     {%favicon%}
     {%css%}
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { 
-            font-family: 'Inter', -apple-system, sans-serif; 
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
             background: #0a0f1a;
-            margin: 0;
-            padding: 0;
+            margin: 0; padding: 0;
+            overflow-x: hidden;
         }
-        .panel { 
-            background: #111827; 
-            border-radius: 8px; 
-            padding: 12px;
-            height: calc(100vh - 24px);
+        /* Sidebar */
+        .sidebar {
+            background: #111827;
+            border-radius: 10px;
+            padding: 14px;
+            height: calc(100vh - 16px);
             overflow-y: auto;
+            transition: all 0.3s ease;
+            margin: 8px 0 8px 8px;
         }
+        .sidebar.collapsed {
+            width: 50px !important;
+            min-width: 50px;
+            padding: 14px 6px;
+        }
+        .sidebar.collapsed .sidebar-content { display: none; }
+        .sidebar-toggle {
+            background: #1f2937;
+            border: 1px solid #374151;
+            color: #9ca3af;
+            width: 32px; height: 32px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s;
+            margin-bottom: 10px;
+        }
+        .sidebar-toggle:hover { background: #374151; color: #e5e7eb; }
+
+        /* Panels */
         .panel-title {
-            font-size: 11px;
-            font-weight: 600;
-            color: #4b5563;
+            font-size: 10px;
+            font-weight: 700;
+            color: #6366f1;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 12px;
-            padding-bottom: 8px;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+            padding-bottom: 6px;
             border-bottom: 1px solid #1f2937;
+        }
+
+        /* Data browser */
+        .data-panel {
+            background: #111827;
+            border-radius: 10px;
+            padding: 14px;
+            height: calc(100vh - 16px);
+            overflow-y: auto;
+            margin: 8px 8px 8px 0;
         }
         .topic-btn {
             background: #1f2937;
-            border: none;
-            color: #9ca3af;
+            border: 1px solid transparent;
+            color: #d1d5db;
             padding: 6px 10px;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             width: 100%;
             text-align: left;
-            font-size: 12px;
-            margin-bottom: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            margin-bottom: 3px;
+            transition: all 0.15s;
         }
-        .topic-btn:hover { background: #374151; color: #e5e7eb; }
+        .topic-btn:hover { background: #374151; border-color: #4b5563; color: #f3f4f6; }
         .field-item {
             padding: 4px 8px 4px 20px;
             font-size: 11px;
             color: #9ca3af;
             cursor: pointer;
-            border-radius: 3px;
+            border-radius: 4px;
+            margin-bottom: 1px;
+            transition: all 0.15s;
         }
-        .field-item:hover { background: #1f2937; }
+        .field-item:hover { background: #1f2937; color: #e5e7eb; }
+
+        /* Selected chips */
         .selected-chip {
             display: inline-flex;
             align-items: center;
-            background: #1e40af;
-            color: #dbeafe;
-            padding: 4px 8px;
-            border-radius: 12px;
+            background: linear-gradient(135deg, #4f46e5, #6366f1);
+            color: #e0e7ff;
+            padding: 3px 10px;
+            border-radius: 20px;
             font-size: 10px;
-            margin: 3px;
+            font-weight: 500;
+            margin: 2px;
             cursor: pointer;
             border: none;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(99,102,241,0.2);
         }
-        .selected-chip:hover { background: #1d4ed8; }
-        .chip-x {
-            margin-left: 6px;
-            font-weight: bold;
-            opacity: 0.7;
-        }
+        .selected-chip:hover { background: linear-gradient(135deg, #6366f1, #818cf8); transform: scale(1.03); }
+        .chip-x { margin-left: 6px; font-weight: bold; opacity: 0.7; }
         .chip-x:hover { opacity: 1; }
-        .info-box {
-            background: #111827;
+
+        /* Main content */
+        .main-area {
+            margin: 8px 6px;
+            height: calc(100vh - 16px);
+            overflow-y: auto;
+            scroll-behavior: smooth;
+        }
+
+        /* Info card */
+        .info-card {
+            background: linear-gradient(135deg, #111827 0%, #1a1f35 100%);
             border: 1px solid #1f2937;
-            border-radius: 8px;
-            padding: 40px;
-            text-align: center;
-            color: #4b5563;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 10px;
         }
-        .main-graph { 
-            background: #111827; 
-            border-radius: 8px; 
-            padding: 16px;
-            height: calc(100vh - 24px);
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 8px;
         }
-        select, input {
+        .info-item {
+            background: rgba(31,41,55,0.5);
+            border-radius: 6px;
+            padding: 8px 12px;
+        }
+        .info-label {
+            font-size: 9px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+        .info-value {
+            font-size: 12px;
+            color: #e5e7eb;
+            font-weight: 500;
+            margin-top: 2px;
+        }
+
+        /* Graph Containers */
+        .graph-card {
+            background: #111827;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            overflow: hidden;
+            border: 1px solid #1f2937;
+        }
+
+        /* Tab styling */
+        .custom-tabs .tab {
+            background: #1f2937 !important;
+            border: none !important;
+            color: #9ca3af !important;
+            padding: 8px 16px !important;
+            font-size: 12px !important;
+            font-weight: 500 !important;
+            border-radius: 6px 6px 0 0 !important;
+            margin-right: 2px !important;
+        }
+        .custom-tabs .tab--selected {
+            background: #111827 !important;
+            color: #6366f1 !important;
+            border-bottom: 2px solid #6366f1 !important;
+        }
+
+        /* Inputs */
+        select, input[type="text"] {
             background: #1f2937 !important;
             border: 1px solid #374151 !important;
             color: #e5e7eb !important;
-            border-radius: 4px;
+            border-radius: 6px;
             padding: 6px 10px;
-            font-size: 12px;
+            font-size: 11px;
             width: 100%;
         }
-        select:focus, input:focus { outline: none; border-color: #3b82f6 !important; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+        select:focus, input:focus { outline: none; border-color: #6366f1 !important; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+        /* Action buttons */
+        .action-btn {
+            background: linear-gradient(135deg, #4f46e5, #6366f1);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .action-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+        .action-btn.secondary {
+            background: #1f2937;
+            border: 1px solid #374151;
+            color: #d1d5db;
+        }
+        .action-btn.secondary:hover { background: #374151; }
+        .action-btn.danger { background: linear-gradient(135deg, #dc2626, #ef4444); }
     </style>
 </head>
 <body>
@@ -174,63 +302,97 @@ app.index_string = '''
 </html>
 '''
 
+# ============================================================
 # Layout
-app.layout = dbc.Container([
-    # Hidden stores - defined in layout directly to avoid issues
+# ============================================================
+
+def make_info_item(label, value):
+    return html.Div([
+        html.Div(label, className='info-label'),
+        html.Div(str(value), className='info-value'),
+    ], className='info-item')
+
+
+app.layout = html.Div([
+    # Stores
     dcc.Store(id='selected-params', data=[]),
     dcc.Store(id='expanded-topics', data=[]),
-    # Stores that capture click events (written by clientside callbacks)
     dcc.Store(id='topic-click-store', data=None),
     dcc.Store(id='field-click-store', data=None),
+    dcc.Store(id='sidebar-collapsed', data=False),
+    dcc.Store(id='active-tab', data='standard'),
 
-    dbc.Row([
-        # Left Panel - File
-        dbc.Col([
+    html.Div([
+        # LEFT SIDEBAR
+        html.Div([
+            html.Button('☰', id='sidebar-toggle-btn', className='sidebar-toggle', n_clicks=0),
             html.Div([
                 html.Div("Dosya", className="panel-title"),
                 dcc.Upload(
                     id='upload',
-                    children=html.Div(['Yükle'], style={'padding': '8px', 'textAlign': 'center', 'border': '1px dashed #475569', 'borderRadius': '4px', 'cursor': 'pointer', 'color': '#94a3b8', 'fontSize': '12px'}),
-                    multiple=False
+                    children=html.Div(['📁 Dosya Yükle'], style={
+                        'padding': '10px', 'textAlign': 'center',
+                        'border': '1px dashed #4f46e5', 'borderRadius': '8px',
+                        'cursor': 'pointer', 'color': '#818cf8', 'fontSize': '11px',
+                        'background': 'rgba(79,70,229,0.05)',
+                        'transition': 'all 0.2s',
+                    }),
+                    multiple=False,
+                    style={'marginBottom': '8px'}
                 ),
-                html.Div(id='upload-status', style={'fontSize': '10px', 'color': '#10b981', 'marginTop': '4px'}),
-                html.Hr(style={'borderColor': '#334155', 'margin': '12px 0'}),
+                html.Div(id='upload-status', style={'fontSize': '10px', 'color': '#10b981', 'marginTop': '2px'}),
+                html.Hr(style={'borderColor': '#1f2937', 'margin': '10px 0'}),
                 dcc.Dropdown(
                     id='file-select',
                     options=[{'label': f, 'value': f} for f in get_files()],
                     value=get_files()[0] if get_files() else None,
-                    style={'fontSize': '12px'},
+                    style={'fontSize': '11px'},
                     className='dash-dropdown'
                 ),
-                html.Hr(style={'borderColor': '#334155', 'margin': '12px 0'}),
-                html.Div("Secili", className="panel-title"),
-                html.Div(id='selected-display')
-            ], className='panel')
-        ], width=2, style={'padding': '12px 6px 12px 12px'}),
-        
-        # Main - Graph
-        dbc.Col([
+                html.Hr(style={'borderColor': '#1f2937', 'margin': '10px 0'}),
+                html.Div("Seçili Veriler", className="panel-title"),
+                html.Div(id='selected-display'),
+            ], className='sidebar-content')
+        ], id='sidebar', className='sidebar', style={
+            'width': '220px', 'minWidth': '220px', 'flexShrink': 0
+        }),
+
+        # MAIN CONTENT
+        html.Div([
+            # Vehicle Info
+            html.Div(id='vehicle-info-panel'),
+
+            # Tabs
             html.Div([
-                dcc.Graph(id='main-graph', style={'height': 'calc(100vh - 80px)'}, config={'scrollZoom': True, 'displaylogo': False})
-            ], className='main-graph')
-        ], width=7, style={'padding': '12px 6px'}),
-        
-        # Right Panel - Data Selection
-        dbc.Col([
-            html.Div([
-                html.Div("Veri Secimi", className="panel-title"),
-                dcc.Input(id='search', type='text', placeholder='Ara...', style={'marginBottom': '12px'}),
-                html.Div(id='topic-list', style={'overflowY': 'auto', 'maxHeight': 'calc(100vh - 140px)'})
-            ], className='panel')
-        ], width=3, style={'padding': '12px 12px 12px 6px'})
-    ])
-], fluid=True, style={'padding': 0, 'maxWidth': '100%'})
+                html.Button('📊 Standart Grafikler', id='tab-standard', className='action-btn',
+                            n_clicks=0, style={'marginRight': '6px'}),
+                html.Button('🔧 Özel Grafikler', id='tab-custom', className='action-btn secondary',
+                            n_clicks=0, style={'marginRight': '6px'}),
+            ], style={'marginBottom': '10px', 'display': 'flex', 'flexWrap': 'wrap', 'gap': '4px'}),
+
+            # Graph area
+            html.Div(id='graph-area'),
+        ], className='main-area', style={'flex': 1}),
+
+        # RIGHT PANEL - Data Selection
+        html.Div([
+            html.Div("Veri Seçimi", className="panel-title"),
+            dcc.Input(id='search', type='text', placeholder='🔍 Topic ara...', style={'marginBottom': '10px'}),
+            html.Div(id='topic-list', style={'overflowY': 'auto', 'maxHeight': 'calc(100vh - 130px)'})
+        ], className='data-panel', style={
+            'width': '280px', 'minWidth': '280px', 'flexShrink': 0
+        }),
+    ], style={
+        'display': 'flex', 'height': '100vh', 'gap': '0',
+    })
+])
 
 
 # ============================================================
 # Callbacks
 # ============================================================
 
+# Upload
 @callback(
     Output('upload-status', 'children'),
     Output('file-select', 'options'),
@@ -250,15 +412,201 @@ def upload_file(contents, filename):
     return "", [{'label': f, 'value': f} for f in files]
 
 
-# --- Topic toggle: use clientside callback to write clicked topic to store ---
+# Sidebar toggle
+app.clientside_callback(
+    """
+    function(n) {
+        var sb = document.getElementById('sidebar');
+        if (!sb) return dash_clientside.no_update;
+        var collapsed = sb.classList.toggle('collapsed');
+        if (collapsed) {
+            sb.style.width = '50px';
+            sb.style.minWidth = '50px';
+        } else {
+            sb.style.width = '220px';
+            sb.style.minWidth = '220px';
+        }
+        return collapsed;
+    }
+    """,
+    Output('sidebar-collapsed', 'data'),
+    Input('sidebar-toggle-btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+
+
+# Tab switching
+@callback(
+    Output('active-tab', 'data'),
+    Output('tab-standard', 'className'),
+    Output('tab-custom', 'className'),
+    Input('tab-standard', 'n_clicks'),
+    Input('tab-custom', 'n_clicks'),
+    prevent_initial_call=True
+)
+def switch_tab(n_std, n_cust):
+    trigger = ctx.triggered_id
+    if trigger == 'tab-standard':
+        return 'standard', 'action-btn', 'action-btn secondary'
+    else:
+        return 'custom', 'action-btn secondary', 'action-btn'
+
+
+# Vehicle Info
+@callback(
+    Output('vehicle-info-panel', 'children'),
+    Input('file-select', 'value')
+)
+def update_vehicle_info(filename):
+    if not filename:
+        return html.Div()
+
+    file_path = os.path.join(ULOG_DIR, filename)
+    try:
+        ulog = get_ulog(file_path)
+        info = get_vehicle_info(ulog)
+    except Exception as e:
+        return html.Div(f"Bilgi alınamadı: {e}", style={'color': '#ef4444', 'fontSize': '11px'})
+
+    items = [
+        make_info_item('Sistem', info.get('sys_name', 'N/A')),
+        make_info_item('Hardware', info.get('ver_hw', 'N/A')),
+        make_info_item('Software', info.get('ver_sw_release', 'N/A')),
+        make_info_item('OS', f"{info.get('ver_os', '')} {info.get('ver_os_version', '')}"),
+        make_info_item('Estimator', info.get('estimator', 'N/A')),
+        make_info_item('Süre', info.get('duration', 'N/A')),
+        make_info_item('Başlangıç', info.get('start_time', 'N/A')),
+    ]
+
+    # Add flight stats if available
+    for key, label in [('distance', 'Mesafe'), ('max_alt', 'Maks. Yükseklik'),
+                       ('max_speed', 'Maks. Hız'), ('avg_speed', 'Ort. Hız'),
+                       ('max_speed_up', 'Maks. Yükselme'), ('max_speed_down', 'Maks. Alçalma'),
+                       ('max_tilt', 'Maks. Eğim')]:
+        if key in info:
+            items.append(make_info_item(label, info[key]))
+
+    return html.Div([
+        html.Div([
+            html.Div("✈️ " + filename, style={
+                'fontSize': '13px', 'fontWeight': '700', 'color': '#e5e7eb',
+                'marginBottom': '10px'
+            }),
+            html.Div(items, className='info-grid')
+        ], className='info-card')
+    ])
+
+
+# Graph area rendering
+@callback(
+    Output('graph-area', 'children'),
+    Input('active-tab', 'data'),
+    Input('file-select', 'value'),
+    Input('selected-params', 'data')
+)
+def render_graph_area(tab, filename, selected):
+    if not filename:
+        return html.Div("Bir ULog dosyası seçin", style={
+            'color': '#4b5563', 'textAlign': 'center', 'padding': '60px',
+            'fontSize': '14px'
+        })
+
+    file_path = os.path.join(ULOG_DIR, filename)
+
+    if tab == 'standard':
+        return render_standard_graphs(file_path)
+    else:
+        return render_custom_graph(file_path, selected)
+
+
+def render_standard_graphs(file_path):
+    """Render all PX4 standard graphs for the loaded ULog."""
+    try:
+        ulog = get_ulog(file_path)
+        graphs = generate_all_graphs(ulog)
+    except Exception as e:
+        return html.Div(f"Hata: {e}", style={'color': '#ef4444'})
+
+    if not graphs:
+        return html.Div("Bu dosyada standart grafikler için veri bulunamadı.", style={
+            'color': '#6b7280', 'textAlign': 'center', 'padding': '40px'
+        })
+
+    children = []
+    children.append(html.Div(
+        f"📊 {len(graphs)} standart grafik oluşturuldu",
+        style={'color': '#6366f1', 'fontSize': '12px', 'fontWeight': '600', 'marginBottom': '8px'}
+    ))
+
+    for key, title, fig in graphs:
+        children.append(
+            html.Div([
+                dcc.Graph(
+                    figure=fig,
+                    config={'scrollZoom': True, 'displaylogo': False,
+                            'modeBarButtonsToRemove': ['lasso2d', 'select2d']},
+                    style={'height': '320px'}
+                )
+            ], className='graph-card')
+        )
+
+    return html.Div(children)
+
+
+def render_custom_graph(file_path, selected):
+    """Render custom user-selected graph."""
+    if not selected:
+        return html.Div([
+            html.Div("🔧 Özel Grafikler", style={
+                'color': '#e5e7eb', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '8px'
+            }),
+            html.Div("Sağ panelden topic ve field seçerek özel grafikler oluşturun.", style={
+                'color': '#6b7280', 'fontSize': '12px', 'padding': '30px', 'textAlign': 'center',
+                'background': '#111827', 'borderRadius': '10px', 'border': '1px dashed #374151',
+            })
+        ])
+
+    colors = TRACE_COLORS
+    fig = go.Figure()
+
+    for idx, param in enumerate(selected):
+        topic, field = param
+        t, y = get_data(file_path, topic, field)
+        if t is not None:
+            # Downsample for performance
+            td, yd = _downsample(np.asarray(t, dtype=np.float64), np.asarray(y, dtype=np.float64))
+            fig.add_trace(go.Scatter(
+                x=td, y=yd,
+                name=f"{topic.split('_')[0]}.{field}",
+                mode='lines',
+                line=dict(color=colors[idx % len(colors)], width=1.5)
+            ))
+
+    fig.update_layout(**_base_layout('Özel Grafik', 'Değer', height=500))
+    fig.update_layout(margin=dict(l=55, r=15, t=35, b=50))
+
+    return html.Div([
+        html.Div([
+            html.Div("🔧 Özel Grafikler", style={
+                'color': '#e5e7eb', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '8px'
+            }),
+            html.Div([
+                dcc.Graph(
+                    figure=fig,
+                    config={'scrollZoom': True, 'displaylogo': False},
+                    style={'height': '500px'}
+                )
+            ], className='graph-card'),
+        ])
+    ])
+
+
+# Topic click clientside callback
 app.clientside_callback(
     """
     function() {
         const triggered = dash_clientside.callback_context.triggered;
-        if (!triggered || triggered.length === 0) {
-            return dash_clientside.no_update;
-        }
-        // Find which button was actually clicked (n_clicks > 0)
+        if (!triggered || triggered.length === 0) return dash_clientside.no_update;
         for (let i = 0; i < triggered.length; i++) {
             if (triggered[i].value && triggered[i].value > 0) {
                 const id = JSON.parse(triggered[i].prop_id.split('.')[0]);
@@ -273,14 +621,12 @@ app.clientside_callback(
     prevent_initial_call=True
 )
 
-# --- Field toggle: use clientside callback to write clicked field to store ---
+# Field click clientside callback
 app.clientside_callback(
     """
     function() {
         const triggered = dash_clientside.callback_context.triggered;
-        if (!triggered || triggered.length === 0) {
-            return dash_clientside.no_update;
-        }
+        if (!triggered || triggered.length === 0) return dash_clientside.no_update;
         for (let i = 0; i < triggered.length; i++) {
             if (triggered[i].value && triggered[i].value > 0) {
                 const id = JSON.parse(triggered[i].prop_id.split('.')[0]);
@@ -296,7 +642,7 @@ app.clientside_callback(
 )
 
 
-# Server-side: handle topic click store → toggle expanded-topics
+# Toggle topic expansion
 @callback(
     Output('expanded-topics', 'data'),
     Input('topic-click-store', 'data'),
@@ -306,19 +652,16 @@ app.clientside_callback(
 def toggle_topic(click_data, expanded):
     if not click_data or 'topic' not in click_data:
         raise PreventUpdate
-    
     topic = click_data['topic']
     expanded = list(expanded or [])
-    
     if topic in expanded:
         expanded.remove(topic)
     else:
         expanded.append(topic)
-    
     return expanded
 
 
-# Server-side: handle field click store → toggle selected-params
+# Toggle field selection
 @callback(
     Output('selected-params', 'data'),
     Input('field-click-store', 'data'),
@@ -328,24 +671,18 @@ def toggle_topic(click_data, expanded):
 def toggle_field(click_data, selected):
     if not click_data or 'topic' not in click_data or 'field' not in click_data:
         raise PreventUpdate
-    
     topic = click_data['topic']
     field = click_data['field']
     param = [topic, field]
-    selected = list(selected or [])
-    
-    # Deep copy to avoid mutation issues
-    selected = [list(s) for s in selected]
-    
+    selected = [list(s) for s in (selected or [])]
     if param in selected:
         selected.remove(param)
     else:
         selected.append(param)
-    
     return selected
 
 
-# Render the topic list based on file, search, expanded, and selected state
+# Render topic list
 @callback(
     Output('topic-list', 'children'),
     Input('file-select', 'value'),
@@ -356,68 +693,74 @@ def toggle_field(click_data, selected):
 def update_topic_list(filename, search, expanded, selected):
     if not filename:
         return html.Div("Dosya seçin", style={'color': '#64748b', 'fontSize': '12px'})
-    
+
     file_path = os.path.join(ULOG_DIR, filename)
     topics = get_topics(file_path)
-    
+
     if search:
         topics = [t for t in topics if search.lower() in t.lower()]
-    
+
     items = []
-    for topic in topics[:50]:
+    for topic in topics[:80]:
         is_expanded = topic in (expanded or [])
         arrow = "▼" if is_expanded else "▶"
-        
+
+        # Count selected fields in this topic
+        sel_count = sum(1 for s in (selected or []) if s[0] == topic)
+        badge = f" ({sel_count})" if sel_count > 0 else ""
+
         items.append(
             html.Button(
-                f"{arrow} {topic[:30]}",
+                f"{arrow} {topic[:35]}{badge}",
                 id={'type': 'topic-btn', 'topic': topic},
                 className='topic-btn',
-                n_clicks=0
+                style={'borderLeft': '3px solid #6366f1'} if sel_count > 0 else {},
             )
         )
-        
+
         if is_expanded:
             fields = get_fields(file_path, topic)
-            for field in fields[:25]:
+            for field in fields[:30]:
                 is_sel = [topic, field] in (selected or [])
-                style = {'background': '#3b82f6', 'color': 'white'} if is_sel else {}
+                style = {
+                    'background': 'rgba(99,102,241,0.2)',
+                    'color': '#a5b4fc',
+                    'borderLeft': '2px solid #6366f1'
+                } if is_sel else {}
                 items.append(
                     html.Div(
-                        f"{'✓ ' if is_sel else '+ '}{field[:22]}",
+                        f"{'✓ ' if is_sel else '  '}{field[:28]}",
                         id={'type': 'field-item', 'topic': topic, 'field': field},
                         className='field-item',
                         style=style,
-                        n_clicks=0
                     )
                 )
-    
+
     return items
 
 
-# Show selected items as chips
+# Render selected chips
 @callback(
     Output('selected-display', 'children'),
     Input('selected-params', 'data')
 )
 def update_selected_display(selected):
     if not selected:
-        return html.Div("Henüz seçim yok", style={'color': '#4b5563', 'fontSize': '11px'})
-    
+        return html.Div("Henüz seçim yok", style={'color': '#4b5563', 'fontSize': '10px'})
+
     chips = []
     for idx, p in enumerate(selected):
         chips.append(
             html.Button(
-                [p[1][:12], html.Span(" ✕", className='chip-x')],
+                [f"{p[0].split('_')[0]}.{p[1][:14]}", html.Span(" ✕", className='chip-x')],
                 id={'type': 'chip-remove', 'index': idx},
                 className='selected-chip',
-                n_clicks=0
             )
         )
     return chips
 
 
-# Remove chip → update selected-params
+# Remove chip
 @callback(
     Output('selected-params', 'data', allow_duplicate=True),
     Input({'type': 'chip-remove', 'index': ALL}, 'n_clicks'),
@@ -427,73 +770,19 @@ def update_selected_display(selected):
 def remove_chip(clicks, selected):
     if not ctx.triggered_id or not selected:
         raise PreventUpdate
-    
-    # Guard against spurious fires (all n_clicks=0 after rebuild)
     if not any(c for c in clicks if c and c > 0):
         raise PreventUpdate
-    
+
     idx = ctx.triggered_id['index']
     selected = [list(s) for s in (selected or [])]
     if 0 <= idx < len(selected):
         selected.pop(idx)
-    
     return selected
 
 
-# Update graph based on selected params
-@callback(
-    Output('main-graph', 'figure'),
-    Input('selected-params', 'data'),
-    Input('file-select', 'value')
-)
-def update_graph(selected, filename):
-    if not selected or not filename:
-        return go.Figure().update_layout(
-            template='plotly_dark',
-            paper_bgcolor='#111827',
-            plot_bgcolor='#111827',
-            annotations=[{
-                'text': 'Sağ panelden veri seçin',
-                'xref': 'paper', 'yref': 'paper',
-                'x': 0.5, 'y': 0.5,
-                'showarrow': False,
-                'font': {'size': 16, 'color': '#4b5563'}
-            }]
-        )
-    
-    file_path = os.path.join(ULOG_DIR, filename)
-    colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
-    
-    fig = go.Figure()
-    
-    for idx, param in enumerate(selected):
-        topic, field = param
-        t, y = get_data(file_path, topic, field)
-        
-        if t is not None:
-            fig.add_trace(go.Scatter(
-                x=t, y=y,
-                name=f"{topic.split('_')[0]}.{field}",
-                mode='lines',
-                line=dict(color=colors[idx % len(colors)], width=1.5)
-            ))
-    
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#111827',
-        plot_bgcolor='#0a0f1a',
-        hovermode='x unified',
-        margin=dict(l=50, r=20, t=30, b=50),
-        xaxis=dict(title='Zaman (s)', gridcolor='#1f2937'),
-        yaxis=dict(title='Değer', gridcolor='#1f2937'),
-        legend=dict(orientation='h', y=1.02, font=dict(size=10))
-    )
-    
-    return fig
-
 if __name__ == '__main__':
-    print("\n" + "="*50)
-    print("ULog Explorer - Dash")
-    print("http://localhost:8050")
-    print("="*50 + "\n")
+    print("\n" + "=" * 50)
+    print("  ULog Explorer - PX4 Flight Review Dashboard")
+    print("  http://localhost:8050")
+    print("=" * 50 + "\n")
     app.run(debug=False, port=8050)
