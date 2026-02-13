@@ -364,9 +364,9 @@ app.layout = html.Div([
 
             # Tabs
             html.Div([
-                html.Button('📊 Standart Grafikler', id='tab-standard', className='action-btn',
+                html.Button('Standart Grafikler', id='tab-standard', className='action-btn',
                             n_clicks=0, style={'marginRight': '6px'}),
-                html.Button('🔧 Özel Grafikler', id='tab-custom', className='action-btn secondary',
+                html.Button('Özel Grafikler', id='tab-custom', className='action-btn secondary',
                             n_clicks=0, style={'marginRight': '6px'}),
             ], style={'marginBottom': '10px', 'display': 'flex', 'flexWrap': 'wrap', 'gap': '4px'}),
 
@@ -377,10 +377,10 @@ app.layout = html.Div([
         # RIGHT PANEL - Data Selection
         html.Div([
             html.Div("Veri Seçimi", className="panel-title"),
-            dcc.Input(id='search', type='text', placeholder='🔍 Topic ara...', style={'marginBottom': '10px'}),
+            dcc.Input(id='search', type='text', placeholder='Topic ara...', style={'marginBottom': '10px'}),
             html.Div(id='topic-list', style={'overflowY': 'auto', 'maxHeight': 'calc(100vh - 130px)'})
-        ], className='data-panel', style={
-            'width': '280px', 'minWidth': '280px', 'flexShrink': 0
+        ], id='right-panel', className='data-panel', style={
+            'width': '280px', 'minWidth': '280px', 'flexShrink': 0, 'display': 'none'
         }),
     ], style={
         'display': 'flex', 'height': '100vh', 'gap': '0',
@@ -450,6 +450,26 @@ def switch_tab(n_std, n_cust):
         return 'standard', 'action-btn', 'action-btn secondary'
     else:
         return 'custom', 'action-btn secondary', 'action-btn'
+
+
+# Right panel visibility based on tab
+app.clientside_callback(
+    """
+    function(tab) {
+        var rp = document.getElementById('right-panel');
+        if (!rp) return dash_clientside.no_update;
+        if (tab === 'custom') {
+            rp.style.display = 'block';
+        } else {
+            rp.style.display = 'none';
+        }
+        return dash_clientside.no_update;
+    }
+    """,
+    Output('right-panel', 'style'),
+    Input('active-tab', 'data'),
+    prevent_initial_call=True
+)
 
 
 # Vehicle Info
@@ -534,7 +554,7 @@ def render_standard_graphs(file_path):
 
     children = []
     children.append(html.Div(
-        f"📊 {len(graphs)} standart grafik oluşturuldu",
+        f"{len(graphs)} standart grafik oluşturuldu",
         style={'color': '#6366f1', 'fontSize': '12px', 'fontWeight': '600', 'marginBottom': '8px'}
     ))
 
@@ -545,7 +565,7 @@ def render_standard_graphs(file_path):
                     figure=fig,
                     config={'scrollZoom': True, 'displaylogo': False,
                             'modeBarButtonsToRemove': ['lasso2d', 'select2d']},
-                    style={'height': '320px'}
+                    style={'height': '500px'}
                 )
             ], className='graph-card')
         )
@@ -557,7 +577,7 @@ def render_custom_graph(file_path, selected):
     """Render custom user-selected graph."""
     if not selected:
         return html.Div([
-            html.Div("🔧 Özel Grafikler", style={
+            html.Div("Özel Grafikler", style={
                 'color': '#e5e7eb', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '8px'
             }),
             html.Div("Sağ panelden topic ve field seçerek özel grafikler oluşturun.", style={
@@ -587,7 +607,7 @@ def render_custom_graph(file_path, selected):
 
     return html.Div([
         html.Div([
-            html.Div("🔧 Özel Grafikler", style={
+            html.Div("Özel Grafikler", style={
                 'color': '#e5e7eb', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '8px'
             }),
             html.Div([

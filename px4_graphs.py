@@ -8,6 +8,11 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pyulog import ULog
+try:
+    from scipy.signal import welch
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 # ============================================================
 # Theme
@@ -26,7 +31,7 @@ TRACE_COLORS = [
 ]
 
 MAX_POINTS = 2000
-GRAPH_HEIGHT = 380  # taller graphs
+GRAPH_HEIGHT = 500  # match dcc.Graph container height
 
 def _base_layout(title, yaxis_title='', height=GRAPH_HEIGHT):
     return dict(
@@ -200,7 +205,7 @@ def _compute_flight_stats(ulog, info):
 
 # 1. Altitude Estimate
 def graph_altitude(ulog):
-    """Altitude: GPS Alt (MSL), Barometer, Fused Estimate"""
+    """Altitude: GPS Alt (MSL), Barometer, Fused Estimate, Altitude Setpoint"""
     gp = _find_topic(ulog, 'vehicle_gps_position')
     gpos = _find_topic(ulog, 'vehicle_global_position')
     lp = _find_topic(ulog, 'vehicle_local_position')
@@ -228,6 +233,21 @@ def graph_altitude(ulog):
     if gpos is not None and 'alt' in gpos.data:
         t3 = _get_time(gpos)
         _add_trace(fig, t3, gpos.data['alt'], 'Fused Altitude Estimation', TRACE_COLORS[2], width=1)
+
+    # Altitude Setpoint (from position_setpoint_triplet or local_position_setpoint)
+    pst = _find_topic(ulog, 'position_setpoint_triplet')
+    if pst is not None and 'current.alt' in pst.data:
+        t4 = _get_time(pst)
+        _add_trace(fig, t4, pst.data['current.alt'], 'Altitude Setpoint',
+                   '#ec4899', width=1.5, dash='dash', mode='lines')
+    else:
+        lp_sp = _find_topic(ulog, 'vehicle_local_position_setpoint')
+        if lp_sp is not None and 'z' in lp_sp.data and gpos is not None and 'alt' in gpos.data:
+            t4 = _get_time(lp_sp)
+            # Convert local z setpoint to approximate MSL altitude
+            ref_alt = gpos.data['alt'][0] if len(gpos.data['alt']) > 0 else 0
+            _add_trace(fig, t4, ref_alt - lp_sp.data['z'], 'Altitude Setpoint',
+                       '#ec4899', width=1.5, dash='dash', mode='lines')
 
     fig.update_layout(**_base_layout('Altitude Estimate', '[m]'))
     return fig
@@ -686,6 +706,87 @@ def graph_flight_path_2d(ulog):
     return fig
 
 
+# 25. Acceleration Power Spectral Density (Spectrogram Heatmap)
+def graph_accel_psd(ulog):
+    """Acceleration PSD Spectrogram — green heatmap like PX4 Flight Review"""
+    if not HAS_SCIPY:
+        return None
+    from scipy.signal import spectrogram
+
+    sc = _find_topic(ulog, 'sensor_combined')
+    if sc is None:
+        return None
+
+    t = _get_time(sc)
+    if len(t) < 512:
+        return None
+
+    dt = np.median(np.diff(t))
+    if dt <= 0:
+        return None
+    fs = 1.0 / dt
+
+    axis_names = ['X', 'Y', 'Z']
+    axis_fields = ['accelerometer_m_s2[0]', 'accelerometer_m_s2[1]', 'accelerometer_m_s2[2]']
+
+    # Check which axes have data
+    valid_axes = [(f, n) for f, n in zip(axis_fields, axis_names) if f in sc.data]
+    if not valid_axes:
+        return None
+
+    nperseg = min(256, len(t) // 4)
+    noverlap = nperseg // 2
+
+    # Green colorscale matching PX4 Flight Review
+    green_scale = [
+        [0.0, '#000000'],
+        [0.15, '#001a00'],
+        [0.3, '#003300'],
+        [0.45, '#006600'],
+        [0.6, '#00aa00'],
+        [0.75, '#00dd00'],
+        [0.9, '#44ff44'],
+        [1.0, '#ffffff'],
+    ]
+
+    figs = []
+    for field, axis_name in valid_axes:
+        accel = np.asarray(sc.data[field], dtype=np.float64)
+        accel = accel - np.mean(accel)
+
+        freqs, times, Sxx = spectrogram(accel, fs=fs, nperseg=nperseg,
+                                         noverlap=noverlap, mode='psd')
+        # Convert times to actual log time
+        times = times * dt + t[0]
+        # Log scale for better visibility
+        Sxx_log = 10 * np.log10(np.maximum(Sxx, 1e-12))
+
+        # Limit frequency range to useful range
+        max_freq = min(fs / 2, 500)
+        freq_mask = freqs <= max_freq
+        freqs = freqs[freq_mask]
+        Sxx_log = Sxx_log[freq_mask, :]
+
+        fig = go.Figure()
+        fig.add_trace(go.Heatmap(
+            x=times, y=freqs, z=Sxx_log,
+            colorscale=green_scale,
+            colorbar=dict(title='dB', len=0.9),
+            hovertemplate='Time: %{x:.1f}s<br>Freq: %{y:.1f}Hz<br>PSD: %{z:.1f}dB<extra></extra>',
+        ))
+
+        layout = _base_layout(
+            f'Acceleration Power Spectral Density — {axis_name}',
+            'Frequency [Hz]', height=GRAPH_HEIGHT
+        )
+        layout['xaxis']['title'] = 'Time (s)'
+        fig.update_layout(**layout)
+        figs.append((f'accel_psd_{axis_name.lower()}',
+                     f'Accel PSD — {axis_name}', fig))
+
+    return figs
+
+
 # ============================================================
 # Registry: exact PX4 Flight Review order
 # ============================================================
@@ -715,6 +816,7 @@ STANDARD_GRAPHS = [
     ('gps_noise', 'GPS Noise & Jamming', graph_gps_noise),
     ('power', 'Power', graph_power),
     ('cpu_ram', 'CPU & RAM', graph_cpu_ram),
+    ('accel_psd', 'Acceleration Power Spectral Density', graph_accel_psd),
 ]
 
 
@@ -723,9 +825,14 @@ def generate_all_graphs(ulog):
     results = []
     for key, title, fn in STANDARD_GRAPHS:
         try:
-            fig = fn(ulog)
-            if fig is not None:
-                results.append((key, title, fig))
+            result = fn(ulog)
+            if result is None:
+                continue
+            # Some generators (PSD spectrogram) return a list of (key, title, fig)
+            if isinstance(result, list):
+                results.extend(result)
+            else:
+                results.append((key, title, result))
         except Exception as e:
             print(f"Warning: Could not generate {title}: {e}")
     return results
