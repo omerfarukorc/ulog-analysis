@@ -315,7 +315,9 @@ def make_info_item(label, value):
 
 app.layout = html.Div([
     # Stores
-    dcc.Store(id='selected-params', data=[]),
+    dcc.Store(id='selected-params', data={"0": []}),  # {graph_idx: [[topic,field],...]}
+    dcc.Store(id='active-graph', data="0"),  # which graph receives new data
+    dcc.Store(id='graph-count', data=1),
     dcc.Store(id='expanded-topics', data=[]),
     dcc.Store(id='topic-click-store', data=None),
     dcc.Store(id='field-click-store', data=None),
@@ -330,7 +332,7 @@ app.layout = html.Div([
                 html.Div("Dosya", className="panel-title"),
                 dcc.Upload(
                     id='upload',
-                    children=html.Div(['📁 Dosya Yükle'], style={
+                    children=html.Div(['Dosya Yükle'], style={
                         'padding': '10px', 'textAlign': 'center',
                         'border': '1px dashed #4f46e5', 'borderRadius': '8px',
                         'cursor': 'pointer', 'color': '#818cf8', 'fontSize': '11px',
@@ -377,8 +379,9 @@ app.layout = html.Div([
         # RIGHT PANEL - Data Selection
         html.Div([
             html.Div("Veri Seçimi", className="panel-title"),
+            html.Div(id='graph-selector', style={'marginBottom': '8px'}),
             dcc.Input(id='search', type='text', placeholder='Topic ara...', style={'marginBottom': '10px'}),
-            html.Div(id='topic-list', style={'overflowY': 'auto', 'maxHeight': 'calc(100vh - 130px)'})
+            html.Div(id='topic-list', style={'overflowY': 'auto', 'maxHeight': 'calc(100vh - 180px)'})
         ], id='right-panel', className='data-panel', style={
             'width': '280px', 'minWidth': '280px', 'flexShrink': 0, 'display': 'none'
         }),
@@ -522,9 +525,10 @@ def update_vehicle_info(filename):
     Output('graph-area', 'children'),
     Input('active-tab', 'data'),
     Input('file-select', 'value'),
-    Input('selected-params', 'data')
+    Input('selected-params', 'data'),
+    Input('active-graph', 'data')
 )
-def render_graph_area(tab, filename, selected):
+def render_graph_area(tab, filename, selected, active_graph):
     if not filename:
         return html.Div("Bir ULog dosyası seçin", style={
             'color': '#4b5563', 'textAlign': 'center', 'padding': '60px',
@@ -536,7 +540,7 @@ def render_graph_area(tab, filename, selected):
     if tab == 'standard':
         return render_standard_graphs(file_path)
     else:
-        return render_custom_graph(file_path, selected)
+        return render_custom_graph(file_path, selected, active_graph)
 
 
 def render_standard_graphs(file_path):
@@ -573,52 +577,103 @@ def render_standard_graphs(file_path):
     return html.Div(children)
 
 
-def render_custom_graph(file_path, selected):
-    """Render custom user-selected graph."""
-    if not selected:
-        return html.Div([
-            html.Div("Özel Grafikler", style={
-                'color': '#e5e7eb', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '8px'
-            }),
-            html.Div("Sağ panelden topic ve field seçerek özel grafikler oluşturun.", style={
-                'color': '#6b7280', 'fontSize': '12px', 'padding': '30px', 'textAlign': 'center',
-                'background': '#111827', 'borderRadius': '10px', 'border': '1px dashed #374151',
-            })
-        ])
+def render_custom_graph(file_path, selected, active_graph=None):
+    """Render multiple custom user-selected graphs."""
+    if not isinstance(selected, dict):
+        selected = {"0": selected if isinstance(selected, list) else []}
 
-    colors = TRACE_COLORS
-    fig = go.Figure()
+    # Check if any graph has data
+    has_any_data = any(len(params) > 0 for params in selected.values())
 
-    for idx, param in enumerate(selected):
-        topic, field = param
-        t, y = get_data(file_path, topic, field)
-        if t is not None:
-            # Downsample for performance
-            td, yd = _downsample(np.asarray(t, dtype=np.float64), np.asarray(y, dtype=np.float64))
-            fig.add_trace(go.Scatter(
-                x=td, y=yd,
-                name=f"{topic.split('_')[0]}.{field}",
-                mode='lines',
-                line=dict(color=colors[idx % len(colors)], width=1.5)
-            ))
+    children = []
 
-    fig.update_layout(**_base_layout('Özel Grafik', 'Değer', height=500))
-    fig.update_layout(margin=dict(l=55, r=15, t=35, b=50))
+    # Render each graph
+    for graph_idx in sorted(selected.keys(), key=lambda x: int(x)):
+        params = selected[graph_idx]
+        is_active = str(graph_idx) == str(active_graph)
 
-    return html.Div([
-        html.Div([
-            html.Div("Özel Grafikler", style={
-                'color': '#e5e7eb', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '8px'
-            }),
+        # Graph header with active indicator and delete button
+        header_style = {
+            'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center',
+            'marginBottom': '6px', 'padding': '6px 10px',
+            'background': 'rgba(99,102,241,0.15)' if is_active else 'rgba(31,41,55,0.5)',
+            'borderRadius': '8px', 'border': '1px solid ' + ('#6366f1' if is_active else '#374151'),
+        }
+        header = html.Div([
             html.Div([
+                html.Span(f"Grafik {int(graph_idx)+1}", style={
+                    'color': '#a5b4fc' if is_active else '#9ca3af',
+                    'fontSize': '13px', 'fontWeight': '600'
+                }),
+                html.Span(f" ({len(params)} veri)" if params else " (boş)", style={
+                    'color': '#6b7280', 'fontSize': '11px', 'marginLeft': '6px'
+                }),
+            ]),
+            html.Div([
+                html.Button("Seç", id={'type': 'select-graph-btn', 'index': graph_idx},
+                            n_clicks=0, style={
+                    'background': '#6366f1' if is_active else '#374151',
+                    'color': '#fff', 'border': 'none', 'borderRadius': '4px',
+                    'padding': '2px 10px', 'fontSize': '10px', 'cursor': 'pointer',
+                    'marginRight': '4px',
+                }),
+                html.Button("Sil", id={'type': 'delete-graph-btn', 'index': graph_idx},
+                            n_clicks=0, style={
+                    'background': '#dc2626', 'color': '#fff', 'border': 'none',
+                    'borderRadius': '4px', 'padding': '2px 8px', 'fontSize': '10px',
+                    'cursor': 'pointer',
+                }) if len(selected) > 1 else None,
+            ], style={'display': 'flex', 'alignItems': 'center'}),
+        ], style=header_style)
+
+        if params:
+            colors = TRACE_COLORS
+            fig = go.Figure()
+            for idx, param in enumerate(params):
+                topic, field = param
+                t, y = get_data(file_path, topic, field)
+                if t is not None:
+                    td, yd = _downsample(np.asarray(t, dtype=np.float64), np.asarray(y, dtype=np.float64))
+                    fig.add_trace(go.Scatter(
+                        x=td, y=yd,
+                        name=f"{topic.split('_')[0]}.{field}",
+                        mode='lines',
+                        line=dict(color=colors[idx % len(colors)], width=1.5)
+                    ))
+            fig.update_layout(**_base_layout(f'Grafik {int(graph_idx)+1}', 'Değer', height=500))
+            fig.update_layout(margin=dict(l=55, r=15, t=35, b=50))
+
+            graph_div = html.Div([
                 dcc.Graph(
                     figure=fig,
                     config={'scrollZoom': True, 'displaylogo': False},
                     style={'height': '500px'}
                 )
-            ], className='graph-card'),
-        ])
-    ])
+            ], className='graph-card')
+        else:
+            graph_div = html.Div(
+                "Sağ panelden veri seçerek bu grafiğe ekleyin.",
+                style={
+                    'color': '#6b7280', 'fontSize': '12px', 'padding': '25px',
+                    'textAlign': 'center', 'background': '#111827',
+                    'borderRadius': '10px', 'border': '1px dashed #374151',
+                    'margin': '4px 0 12px 0',
+                }
+            )
+
+        children.append(html.Div([header, graph_div], style={'marginBottom': '12px'}))
+
+    # Add New Graph button
+    children.append(
+        html.Button("+ Yeni Grafik Ekle", id='add-graph-btn', n_clicks=0, style={
+            'width': '100%', 'padding': '10px', 'background': '#1f2937',
+            'border': '1px dashed #6366f1', 'borderRadius': '8px',
+            'color': '#818cf8', 'fontSize': '12px', 'fontWeight': '600',
+            'cursor': 'pointer', 'marginTop': '4px',
+        })
+    )
+
+    return html.Div(children)
 
 
 # Topic click clientside callback
@@ -681,24 +736,32 @@ def toggle_topic(click_data, expanded):
     return expanded
 
 
-# Toggle field selection
+# Toggle field selection — adds to ACTIVE graph
 @callback(
     Output('selected-params', 'data'),
     Input('field-click-store', 'data'),
     State('selected-params', 'data'),
+    State('active-graph', 'data'),
     prevent_initial_call=True
 )
-def toggle_field(click_data, selected):
+def toggle_field(click_data, selected, active_graph):
     if not click_data or 'topic' not in click_data or 'field' not in click_data:
         raise PreventUpdate
+    if not isinstance(selected, dict):
+        selected = {"0": selected if isinstance(selected, list) else []}
+    active_graph = str(active_graph or "0")
+    if active_graph not in selected:
+        selected[active_graph] = []
+
     topic = click_data['topic']
     field = click_data['field']
     param = [topic, field]
-    selected = [list(s) for s in (selected or [])]
-    if param in selected:
-        selected.remove(param)
+    graph_params = [list(s) for s in selected[active_graph]]
+    if param in graph_params:
+        graph_params.remove(param)
     else:
-        selected.append(param)
+        graph_params.append(param)
+    selected[active_graph] = graph_params
     return selected
 
 
@@ -708,9 +771,10 @@ def toggle_field(click_data, selected):
     Input('file-select', 'value'),
     Input('search', 'value'),
     Input('expanded-topics', 'data'),
-    Input('selected-params', 'data')
+    Input('selected-params', 'data'),
+    State('active-graph', 'data')
 )
-def update_topic_list(filename, search, expanded, selected):
+def update_topic_list(filename, search, expanded, selected, active_graph):
     if not filename:
         return html.Div("Dosya seçin", style={'color': '#64748b', 'fontSize': '12px'})
 
@@ -720,13 +784,19 @@ def update_topic_list(filename, search, expanded, selected):
     if search:
         topics = [t for t in topics if search.lower() in t.lower()]
 
+    # Get active graph's selected params
+    if not isinstance(selected, dict):
+        selected = {"0": selected if isinstance(selected, list) else []}
+    active_graph = str(active_graph or "0")
+    active_params = selected.get(active_graph, [])
+
     items = []
     for topic in topics[:80]:
         is_expanded = topic in (expanded or [])
         arrow = "▼" if is_expanded else "▶"
 
-        # Count selected fields in this topic
-        sel_count = sum(1 for s in (selected or []) if s[0] == topic)
+        # Count selected fields in this topic for active graph
+        sel_count = sum(1 for s in active_params if s[0] == topic)
         badge = f" ({sel_count})" if sel_count > 0 else ""
 
         items.append(
@@ -741,7 +811,7 @@ def update_topic_list(filename, search, expanded, selected):
         if is_expanded:
             fields = get_fields(file_path, topic)
             for field in fields[:30]:
-                is_sel = [topic, field] in (selected or [])
+                is_sel = [topic, field] in active_params
                 style = {
                     'background': 'rgba(99,102,241,0.2)',
                     'color': '#a5b4fc',
@@ -759,17 +829,57 @@ def update_topic_list(filename, search, expanded, selected):
     return items
 
 
-# Render selected chips
+# Render graph selector in right panel
+@callback(
+    Output('graph-selector', 'children'),
+    Input('selected-params', 'data'),
+    Input('active-graph', 'data')
+)
+def update_graph_selector(selected, active_graph):
+    if not isinstance(selected, dict):
+        selected = {"0": []}
+    active_graph = str(active_graph or "0")
+
+    btns = []
+    for gidx in sorted(selected.keys(), key=lambda x: int(x)):
+        is_active = str(gidx) == active_graph
+        btns.append(
+            html.Button(
+                f"Grafik {int(gidx)+1}",
+                id={'type': 'select-graph-panel-btn', 'index': gidx},
+                n_clicks=0,
+                style={
+                    'background': '#6366f1' if is_active else '#374151',
+                    'color': '#fff', 'border': 'none', 'borderRadius': '6px',
+                    'padding': '4px 12px', 'fontSize': '11px', 'cursor': 'pointer',
+                    'fontWeight': '600' if is_active else '400',
+                }
+            )
+        )
+    return html.Div(btns, style={'display': 'flex', 'gap': '4px', 'flexWrap': 'wrap'})
+
+
+# Render selected chips — grouped by graph
 @callback(
     Output('selected-display', 'children'),
-    Input('selected-params', 'data')
+    Input('selected-params', 'data'),
+    Input('active-graph', 'data')
 )
-def update_selected_display(selected):
-    if not selected:
-        return html.Div("Henüz seçim yok", style={'color': '#4b5563', 'fontSize': '10px'})
+def update_selected_display(selected, active_graph):
+    if not isinstance(selected, dict):
+        selected = {"0": selected if isinstance(selected, list) else []}
+    active_graph = str(active_graph or "0")
+
+    # Show active graph's selections
+    params = selected.get(active_graph, [])
+    if not params:
+        return html.Div(f"Grafik {int(active_graph)+1}: Henüz seçim yok",
+                        style={'color': '#4b5563', 'fontSize': '10px'})
 
     chips = []
-    for idx, p in enumerate(selected):
+    chips.append(html.Div(f"Grafik {int(active_graph)+1}:",
+                          style={'color': '#818cf8', 'fontSize': '10px', 'fontWeight': '600', 'marginBottom': '2px'}))
+    for idx, p in enumerate(params):
         chips.append(
             html.Button(
                 [f"{p[0].split('_')[0]}.{p[1][:14]}", html.Span(" ✕", className='chip-x')],
@@ -785,19 +895,112 @@ def update_selected_display(selected):
     Output('selected-params', 'data', allow_duplicate=True),
     Input({'type': 'chip-remove', 'index': ALL}, 'n_clicks'),
     State('selected-params', 'data'),
+    State('active-graph', 'data'),
     prevent_initial_call=True
 )
-def remove_chip(clicks, selected):
+def remove_chip(clicks, selected, active_graph):
     if not ctx.triggered_id or not selected:
         raise PreventUpdate
     if not any(c for c in clicks if c and c > 0):
         raise PreventUpdate
 
+    if not isinstance(selected, dict):
+        selected = {"0": selected if isinstance(selected, list) else []}
+    active_graph = str(active_graph or "0")
+
     idx = ctx.triggered_id['index']
-    selected = [list(s) for s in (selected or [])]
-    if 0 <= idx < len(selected):
-        selected.pop(idx)
+    params = [list(s) for s in selected.get(active_graph, [])]
+    if 0 <= idx < len(params):
+        params.pop(idx)
+    selected[active_graph] = params
     return selected
+
+
+# Add new graph
+@callback(
+    Output('selected-params', 'data', allow_duplicate=True),
+    Output('active-graph', 'data', allow_duplicate=True),
+    Input('add-graph-btn', 'n_clicks'),
+    State('selected-params', 'data'),
+    prevent_initial_call=True
+)
+def add_graph(n_clicks, selected):
+    if not n_clicks:
+        raise PreventUpdate
+    if not isinstance(selected, dict):
+        selected = {"0": []}
+    # Find next index
+    next_idx = str(max(int(k) for k in selected.keys()) + 1) if selected else "0"
+    selected[next_idx] = []
+    return selected, next_idx
+
+
+# Select graph from main area buttons
+app.clientside_callback(
+    """
+    function() {
+        const triggered = dash_clientside.callback_context.triggered;
+        if (!triggered || triggered.length === 0) return dash_clientside.no_update;
+        for (let i = 0; i < triggered.length; i++) {
+            if (triggered[i].value && triggered[i].value > 0) {
+                const id = JSON.parse(triggered[i].prop_id.split('.')[0]);
+                return id.index;
+            }
+        }
+        return dash_clientside.no_update;
+    }
+    """,
+    Output('active-graph', 'data'),
+    Input({'type': 'select-graph-btn', 'index': ALL}, 'n_clicks'),
+    prevent_initial_call=True
+)
+
+# Select graph from right panel buttons
+app.clientside_callback(
+    """
+    function() {
+        const triggered = dash_clientside.callback_context.triggered;
+        if (!triggered || triggered.length === 0) return dash_clientside.no_update;
+        for (let i = 0; i < triggered.length; i++) {
+            if (triggered[i].value && triggered[i].value > 0) {
+                const id = JSON.parse(triggered[i].prop_id.split('.')[0]);
+                return id.index;
+            }
+        }
+        return dash_clientside.no_update;
+    }
+    """,
+    Output('active-graph', 'data', allow_duplicate=True),
+    Input({'type': 'select-graph-panel-btn', 'index': ALL}, 'n_clicks'),
+    prevent_initial_call=True
+)
+
+
+# Delete graph
+@callback(
+    Output('selected-params', 'data', allow_duplicate=True),
+    Output('active-graph', 'data', allow_duplicate=True),
+    Input({'type': 'delete-graph-btn', 'index': ALL}, 'n_clicks'),
+    State('selected-params', 'data'),
+    State('active-graph', 'data'),
+    prevent_initial_call=True
+)
+def delete_graph(clicks, selected, active_graph):
+    if not ctx.triggered_id or not selected:
+        raise PreventUpdate
+    if not any(c for c in clicks if c and c > 0):
+        raise PreventUpdate
+
+    if not isinstance(selected, dict):
+        raise PreventUpdate
+
+    del_idx = str(ctx.triggered_id['index'])
+    if del_idx in selected and len(selected) > 1:
+        del selected[del_idx]
+        # If deleted graph was active, switch to first available
+        if str(active_graph) == del_idx:
+            active_graph = sorted(selected.keys(), key=lambda x: int(x))[0]
+    return selected, active_graph
 
 
 if __name__ == '__main__':
