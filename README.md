@@ -1,52 +1,50 @@
 # ULog Explorer
-
-PX4/ArduPilot uçuş loglarını (ULog) analiz etmek için basit ve hızlı bir araç.
-
-## Özellikler
-
--  ULog dosyası yükleme
--  Topic ve field seçimi
--  İnteraktif Plotly grafikleri
--  Lazy loading ile hızlı performans
--  Modern dark tema
-
-## Kurulum
-
+ 
+A simple and fast tool for analyzing PX4/ArduPilot flight logs (ULog).
+ 
+## Features
+ 
+- Upload ULog files
+- Select topics and fields
+- Interactive Plotly charts
+- Fast performance with lazy loading
+## Installation
+ 
 ### Windows
 ```bash
 setup.bat
 ```
-
+ 
 ### Linux/Mac
 ```bash
 chmod +x setup.sh run_explorer.sh
 ./setup.sh
 ```
-
-## Çalıştırma
-
+ 
+## Running
+ 
 ### Windows
 ```bash
 run_explorer.bat
 ```
-
+ 
 ### Linux/Mac
 ```bash
 ./run_explorer.sh
 ```
-
-Tarayıcıda açın: **http://localhost:8050**
-
-## Gereksinimler
-
+ 
+Open in your browser: **http://localhost:8050**
+ 
+## Requirements
+ 
 - Python 3.8+
 - Dash
 - Plotly
 - pyulog
-
-## Kullanım
-
-1. Sol panelden ULog dosyası yükleyin veya seçin
-2. Sağ panelde topic'lere tıklayarak field'ları görün
-3. Field'lara tıklayarak grafiğe ekleyin
-4. Ortadaki grafikte verileri analiz edin
+## Usage
+ 
+1. Upload or select a ULog file from the left panel
+2. Click on topics in the right panel to view their fields
+3. Click on fields to add them to the chart
+4. Analyze the data in the chart in the middle
+ 
